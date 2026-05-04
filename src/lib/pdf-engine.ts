@@ -1,6 +1,5 @@
 // Lazy wrapper around pdf.js with worker setup. Loads pages on demand.
 import * as pdfjsLib from "pdfjs-dist";
-// @ts-expect-error vite ?url import for worker
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 if (typeof window !== "undefined") {
