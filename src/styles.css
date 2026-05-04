@@ -146,5 +146,23 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
   }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+.tts-word {
+  transition: background-color 120ms ease, color 120ms ease;
+  border-radius: 4px;
+  padding: 0 1px;
+}
+.tts-word.active {
+  background-color: var(--color-highlight);
+  color: var(--color-highlight-foreground);
+  box-shadow: 0 0 0 2px var(--color-highlight);
 }
