@@ -183,6 +183,7 @@ function Reader() {
       const v = voices.find((x) => x.name === voiceName);
       if (v) u.voice = v;
       u.rate = rate;
+      u.pitch = 1.05;
 
       u.onboundary = (ev) => {
         if (ev.name && ev.name !== "word") return;
