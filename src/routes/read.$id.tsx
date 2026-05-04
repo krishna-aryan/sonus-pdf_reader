@@ -98,12 +98,29 @@ function Reader() {
     };
   }, [id, navigate]);
 
-  // Voices
+  // Voices — prefer calm female voices
   useEffect(() => {
     getVoices().then((v) => {
       setVoices(v);
-      const en = v.find((x) => x.lang.startsWith("en") && x.default) || v.find((x) => x.lang.startsWith("en")) || v[0];
-      if (en) setVoiceName(en.name);
+      // Known calm/female voice name hints across platforms
+      const femaleHints = [
+        "samantha", "victoria", "karen", "moira", "tessa", "fiona", "serena",
+        "allison", "ava", "susan", "kate", "zira", "hazel", "joanna", "salli",
+        "amy", "emma", "google uk english female", "google us english",
+        "female", "woman",
+      ];
+      const score = (voice: SpeechSynthesisVoice) => {
+        const n = voice.name.toLowerCase();
+        let s = 0;
+        if (voice.lang.toLowerCase().startsWith("en")) s += 10;
+        if (femaleHints.some((h) => n.includes(h))) s += 20;
+        if (n.includes("google")) s += 3;
+        if (n.includes("natural") || n.includes("neural") || n.includes("premium")) s += 5;
+        if (n.includes("male") && !n.includes("female")) s -= 15;
+        return s;
+      };
+      const best = [...v].sort((a, b) => score(b) - score(a))[0];
+      if (best) setVoiceName(best.name);
     });
   }, []);
 
