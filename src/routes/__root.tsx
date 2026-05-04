@@ -31,7 +31,7 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
       { title: "Sonus — Listen to any PDF" },
       { name: "description", content: "Upload PDFs and listen to them with synced highlighting. A calm, fast, mobile-first reader." },
-      { name: "theme-color", content: "#fbf7f0" },
+      { name: "theme-color", content: "#1a1612" },
       { property: "og:title", content: "Sonus — Listen to any PDF" },
       { property: "og:description", content: "Turn any PDF into audio with real-time highlighting." },
       { property: "og:type", content: "website" },
