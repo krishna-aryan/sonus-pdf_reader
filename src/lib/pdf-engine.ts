@@ -15,8 +15,13 @@ export interface PageContent {
 
 export async function loadPdfFromBlob(blob: Blob) {
   const buf = await blob.arrayBuffer();
-  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
-  return doc;
+  try {
+    return await pdfjsLib.getDocument({ data: buf }).promise;
+  } catch (err) {
+    console.warn("pdf.js worker load failed, retrying without worker", err);
+    // iOS WebKit can fail module-worker initialization in some browser/version combos.
+    return await pdfjsLib.getDocument({ data: buf, disableWorker: true }).promise;
+  }
 }
 
 export async function getPageCount(blob: Blob): Promise<number> {
@@ -31,15 +36,23 @@ export async function extractPageText(
   pageNumber: number
 ): Promise<PageContent> {
   const page = await doc.getPage(pageNumber);
-  const content = await page.getTextContent();
+  let content = await page.getTextContent();
+  if (!content.items.length) {
+    // Retry with normalization hints to improve extraction for some iOS-rendered PDFs.
+    content = await page.getTextContent({
+      normalizeWhitespace: true,
+      disableCombineTextItems: false,
+    });
+  }
   let text = "";
   let lastY: number | null = null;
-  for (const item of content.items as Array<{ str: string; transform?: number[]; hasEOL?: boolean }>) {
+  for (const item of content.items as Array<{ str?: string; transform?: number[]; hasEOL?: boolean }>) {
+    const str = item.str ?? "";
     const y = item.transform?.[5] ?? null;
     if (lastY !== null && y !== null && Math.abs(y - lastY) > 5 && text && !text.endsWith(" ") && !text.endsWith("\n")) {
       text += "\n";
     }
-    text += item.str;
+    text += str;
     if (item.hasEOL) text += "\n";
     else text += " ";
     lastY = y;
