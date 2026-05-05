@@ -76,6 +76,26 @@ function Reader() {
   const activeWordElRef = useRef<HTMLSpanElement | null>(null);
   const readyToPlayNextRef = useRef(false);
   const hasStartedPlaybackRef = useRef(false);
+  const speechUnlockedRef = useRef(false);
+
+  const withTimeout = useCallback(
+    (promise: Promise<PageContent>, ms: number, label: string): Promise<PageContent> =>
+      new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          reject(new Error(`${label} timed out after ${ms}ms`));
+        }, ms);
+        promise
+          .then((value) => {
+            window.clearTimeout(timer);
+            resolve(value);
+          })
+          .catch((err) => {
+            window.clearTimeout(timer);
+            reject(err);
+          });
+      }),
+    []
+  );
 
   // Load PDF + meta
   useEffect(() => {
@@ -107,6 +127,7 @@ function Reader() {
   useEffect(() => {
     getVoices().then((v) => {
       setVoices(v);
+
       const femaleHints = [
         "samantha", "victoria", "karen", "moira", "tessa", "fiona", "serena",
         "allison", "ava", "susan", "kate", "zira", "hazel", "joanna", "salli",
@@ -174,21 +195,31 @@ function Reader() {
     setLoadingPage(true);
     setActiveWord(-1);
     (async () => {
-      const content = await extractPageText(pdfDoc, page);
-      if (cancelled) return;
-      setPageContent(content);
-      wordsRef.current = content.words;
-      setLoadingPage(false);
-      // Background preload next page
-      if (page < meta.pages) {
-        extractPageText(pdfDoc, page + 1).catch(() => {});
-      }
-      // Persist progress
-      updateMeta(id, { lastPage: page });
-      // If user requested next-page playback, kick it off
-      if (readyToPlayNextRef.current) {
-        readyToPlayNextRef.current = false;
-        setTimeout(() => speakCurrent(content), 100);
+      try {
+        const content = await withTimeout(extractPageText(pdfDoc, page), 15000, "Page text");
+        if (cancelled) return;
+        setPageContent(content);
+        wordsRef.current = content.words;
+        // Background preload next page
+        if (page < meta.pages) {
+          extractPageText(pdfDoc, page + 1).catch(() => {});
+        }
+        // Persist progress
+        updateMeta(id, { lastPage: page });
+        // If user requested next-page playback, kick it off
+        if (readyToPlayNextRef.current) {
+          readyToPlayNextRef.current = false;
+          setTimeout(() => speakCurrent(content), 100);
+        }
+      } catch (err) {
+        console.error("Failed to load page text", err);
+        if (!cancelled) {
+          setPageContent({ pageNumber: page, text: "", words: [] });
+          wordsRef.current = [];
+          setIsPlaying(false);
+        }
+      } finally {
+        if (!cancelled) setLoadingPage(false);
       }
     })();
     return () => {
@@ -203,6 +234,19 @@ function Reader() {
       activeWordElRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [activeWord]);
+
+  const unlockSpeech = useCallback(() => {
+    if (speechUnlockedRef.current) return;
+    const synth = window.speechSynthesis;
+    const probe = new SpeechSynthesisUtterance(" ");
+    probe.volume = 0;
+    probe.rate = 1;
+    probe.pitch = 1;
+    synth.cancel();
+    synth.speak(probe);
+    synth.cancel();
+    speechUnlockedRef.current = true;
+  }, []);
 
   const speakCurrent = useCallback(
     (content?: PageContent | null, fromWord = 0) => {
@@ -226,6 +270,7 @@ function Reader() {
       const selectedVoiceName = voiceOptions[voiceGender];
       const v = voices.find((x) => x.name === selectedVoiceName);
       if (v) u.voice = v;
+      u.lang = v?.lang || "en-US";
       u.rate = rate;
       u.pitch = 1.05;
 
@@ -267,6 +312,7 @@ function Reader() {
   }, [voiceGender, voiceOptions, rate, isPlaying, activeWord, pageContent, speakCurrent]);
 
   const handlePlayPause = () => {
+    unlockSpeech();
     const synth = window.speechSynthesis;
     if (isPlaying) {
       synth.pause();
