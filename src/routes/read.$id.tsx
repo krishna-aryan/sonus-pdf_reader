@@ -78,25 +78,6 @@ function Reader() {
   const hasStartedPlaybackRef = useRef(false);
   const speechUnlockedRef = useRef(false);
 
-  const withTimeout = useCallback(
-    (promise: Promise<PageContent>, ms: number, label: string): Promise<PageContent> =>
-      new Promise((resolve, reject) => {
-        const timer = window.setTimeout(() => {
-          reject(new Error(`${label} timed out after ${ms}ms`));
-        }, ms);
-        promise
-          .then((value) => {
-            window.clearTimeout(timer);
-            resolve(value);
-          })
-          .catch((err) => {
-            window.clearTimeout(timer);
-            reject(err);
-          });
-      }),
-    []
-  );
-
   // Load PDF + meta
   useEffect(() => {
     let cancelled = false;
@@ -196,7 +177,7 @@ function Reader() {
     setActiveWord(-1);
     (async () => {
       try {
-        const content = await withTimeout(extractPageText(pdfDoc, page), 15000, "Page text");
+        const content = await extractPageText(pdfDoc, page);
         if (cancelled) return;
         setPageContent(content);
         wordsRef.current = content.words;
