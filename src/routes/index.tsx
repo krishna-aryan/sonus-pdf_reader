@@ -33,6 +33,46 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+function getImportErrorMessage(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes("quota") ||
+    lower.includes("storage") ||
+    lower.includes("not enough space")
+  ) {
+    return "Not enough storage space on this device to save the PDF.";
+  }
+  if (
+    lower.includes("invalidstateerror") ||
+    lower.includes("securityerror") ||
+    lower.includes("aborterror")
+  ) {
+    return "Storage is blocked in this browser mode. On iPhone, disable Private mode and try again.";
+  }
+  if (lower.includes("timed out")) {
+    return "This PDF is taking too long to process. Try a smaller file first.";
+  }
+  return "Couldn't import that PDF on this device.";
+}
+
 function Library() {
   const navigate = useNavigate();
   const [pdfs, setPdfs] = useState<PdfRecord[]>([]);
@@ -67,14 +107,18 @@ function Library() {
     if (!pendingFile) return;
     setImporting(true);
     try {
-      const pages = await getPageCount(pendingFile);
-      await savePdf(pendingFile, pendingName.trim() || pendingFile.name, pages);
+      const pages = await withTimeout(getPageCount(pendingFile), 30000, "PDF read");
+      await withTimeout(
+        savePdf(pendingFile, pendingName.trim() || pendingFile.name, pages),
+        30000,
+        "PDF save"
+      );
       toast.success("Added to your library");
       setPendingFile(null);
       await refresh();
     } catch (err) {
       console.error(err);
-      toast.error("Couldn't read that PDF");
+      toast.error(getImportErrorMessage(err));
     } finally {
       setImporting(false);
     }

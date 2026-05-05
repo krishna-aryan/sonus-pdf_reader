@@ -33,6 +33,18 @@ function getDb() {
   return dbPromise;
 }
 
+function createId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function fileToBlob(file: File): Promise<Blob> {
+  const buf = await file.arrayBuffer();
+  return new Blob([buf], { type: file.type || "application/pdf" });
+}
+
 export async function listPdfs(): Promise<PdfRecord[]> {
   const db = await getDb();
   const all = (await db.getAll("meta")) as PdfRecord[];
@@ -52,7 +64,7 @@ export async function getPdfBlob(id: string): Promise<Blob | undefined> {
 
 export async function savePdf(file: File, name: string, pages: number): Promise<PdfRecord> {
   const db = await getDb();
-  const id = crypto.randomUUID();
+  const id = createId();
   const record: PdfRecord = {
     id,
     name,
@@ -63,8 +75,9 @@ export async function savePdf(file: File, name: string, pages: number): Promise<
     lastWord: 0,
     bookmarks: [],
   };
+  const blob = await fileToBlob(file);
   await db.put("meta", record);
-  await db.put("blobs", { id, blob: file } as PdfBlob);
+  await db.put("blobs", { id, blob } as PdfBlob);
   return record;
 }
 
