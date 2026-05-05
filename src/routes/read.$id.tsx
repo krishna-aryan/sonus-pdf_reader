@@ -59,7 +59,11 @@ function Reader() {
   const [activeWord, setActiveWord] = useState<number>(-1);
   const [rate, setRate] = useState<number>(1);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [voiceName, setVoiceName] = useState<string>("");
+  const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
+  const [voiceOptions, setVoiceOptions] = useState<{ female: string; male: string }>({
+    female: "",
+    male: "",
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -71,6 +75,7 @@ function Reader() {
   const wordsRef = useRef<PageContent["words"]>([]);
   const activeWordElRef = useRef<HTMLSpanElement | null>(null);
   const readyToPlayNextRef = useRef(false);
+  const hasStartedPlaybackRef = useRef(false);
 
   // Load PDF + meta
   useEffect(() => {
@@ -102,25 +107,63 @@ function Reader() {
   useEffect(() => {
     getVoices().then((v) => {
       setVoices(v);
-      // Known calm/female voice name hints across platforms
       const femaleHints = [
         "samantha", "victoria", "karen", "moira", "tessa", "fiona", "serena",
         "allison", "ava", "susan", "kate", "zira", "hazel", "joanna", "salli",
-        "amy", "emma", "google uk english female", "google us english",
+        "amy", "emma", "aria", "jenny", "libby", "sonia", "en-us-language",
+        "google uk english female", "google us english",
         "female", "woman",
       ];
-      const score = (voice: SpeechSynthesisVoice) => {
+      const maleHints = [
+        "andrew", "daniel", "david", "george", "fred", "alex", "guy",
+        "brian", "ryan", "arthur", "davis", "christopher", "en-gb-language",
+        "male", "man",
+      ];
+      const baseScore = (voice: SpeechSynthesisVoice) => {
         const n = voice.name.toLowerCase();
         let s = 0;
         if (voice.lang.toLowerCase().startsWith("en")) s += 10;
-        if (femaleHints.some((h) => n.includes(h))) s += 20;
         if (n.includes("google")) s += 3;
         if (n.includes("natural") || n.includes("neural") || n.includes("premium")) s += 5;
+        return s;
+      };
+      const femaleScore = (voice: SpeechSynthesisVoice) => {
+        const n = voice.name.toLowerCase();
+        let s = baseScore(voice);
+        if (femaleHints.some((h) => n.includes(h))) s += 20;
         if (n.includes("male") && !n.includes("female")) s -= 15;
         return s;
       };
-      const best = [...v].sort((a, b) => score(b) - score(a))[0];
-      if (best) setVoiceName(best.name);
+      const maleScore = (voice: SpeechSynthesisVoice) => {
+        const n = voice.name.toLowerCase();
+        let s = baseScore(voice);
+        if (maleHints.some((h) => n.includes(h))) s += 20;
+        if (n.includes("female") && !n.includes("male")) s -= 15;
+        return s;
+      };
+      const findByName = (needles: string[]) =>
+        v.find((voice) => needles.some((n) => voice.name.toLowerCase().includes(n.toLowerCase())));
+      const preferredFemale = findByName([
+        "microsoft ava",
+        "ava (natural)",
+        "ava online",
+        "samantha",
+        "google uk english female",
+      ]);
+      const preferredMale = findByName([
+        "microsoft andrew",
+        "andrew (natural)",
+        "andrew online",
+        "daniel",
+        "google uk english male",
+      ]);
+
+      const bestFemale = preferredFemale ?? [...v].sort((a, b) => femaleScore(b) - femaleScore(a))[0];
+      const bestMale = preferredMale ?? [...v].sort((a, b) => maleScore(b) - maleScore(a))[0];
+      setVoiceOptions({
+        female: bestFemale?.name ?? "",
+        male: bestMale?.name ?? bestFemale?.name ?? "",
+      });
     });
   }, []);
 
@@ -180,7 +223,8 @@ function Reader() {
       const startChar = c.words[fromWord]?.start ?? 0;
       const text = c.text.slice(startChar);
       const u = new SpeechSynthesisUtterance(text);
-      const v = voices.find((x) => x.name === voiceName);
+      const selectedVoiceName = voiceOptions[voiceGender];
+      const v = voices.find((x) => x.name === selectedVoiceName);
       if (v) u.voice = v;
       u.rate = rate;
       u.pitch = 1.05;
@@ -206,11 +250,21 @@ function Reader() {
       u.onerror = () => setIsPlaying(false);
 
       utterRef.current = u;
+      hasStartedPlaybackRef.current = true;
       setIsPlaying(true);
       synth.speak(u);
     },
-    [pageContent, voices, voiceName, rate, meta, page]
+    [pageContent, voices, voiceGender, voiceOptions, rate, meta, page]
   );
+
+  // Apply speed/voice changes immediately from the current word.
+  useEffect(() => {
+    if (!hasStartedPlaybackRef.current) return;
+    const synth = window.speechSynthesis;
+    if (!isPlaying && !synth.paused) return;
+    const fromWord = activeWord >= 0 ? activeWord : 0;
+    speakCurrent(pageContent, fromWord);
+  }, [voiceGender, voiceOptions, rate, isPlaying, activeWord, pageContent, speakCurrent]);
 
   const handlePlayPause = () => {
     const synth = window.speechSynthesis;
@@ -218,8 +272,8 @@ function Reader() {
       synth.pause();
       setIsPlaying(false);
     } else if (synth.paused && utterRef.current) {
-      synth.resume();
-      setIsPlaying(true);
+      const fromWord = activeWord >= 0 ? activeWord : 0;
+      speakCurrent(pageContent, fromWord);
     } else {
       const startWord = meta?.lastWord && page === meta.lastPage ? meta.lastWord : 0;
       speakCurrent(pageContent, startWord);
@@ -396,14 +450,14 @@ function Reader() {
               <div className="mt-6 space-y-6">
                 <div>
                   <label className="text-sm font-medium block mb-2">Voice</label>
-                  <Select value={voiceName} onValueChange={setVoiceName}>
+                  <Select
+                    value={voiceGender}
+                    onValueChange={(v) => setVoiceGender(v as "female" | "male")}
+                  >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {voices.map((v) => (
-                        <SelectItem key={v.name} value={v.name}>
-                          {v.name} <span className="text-muted-foreground">({v.lang})</span>
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="female">Female</SelectItem>
+                      <SelectItem value="male">Male</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
