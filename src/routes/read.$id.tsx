@@ -11,13 +11,6 @@ import {
 } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   ChevronLeft,
   ChevronRight,
   Pause,
@@ -30,6 +23,7 @@ import {
   Loader2,
   SkipBack,
   SkipForward,
+  BookText,
 } from "lucide-react";
 import {
   getPdfBlob,
@@ -59,17 +53,19 @@ function Reader() {
   const [activeWord, setActiveWord] = useState<number>(-1);
   const [rate, setRate] = useState<number>(1);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
-  const [voiceOptions, setVoiceOptions] = useState<{ female: string; male: string }>({
-    female: "",
-    male: "",
-  });
+  const [calmVoiceName, setCalmVoiceName] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ page: number; preview: string }[]>([]);
   const [searching, setSearching] = useState(false);
+  const [vocabOpen, setVocabOpen] = useState(false);
+  const [selectedWord, setSelectedWord] = useState("");
+  const [vocabLoading, setVocabLoading] = useState(false);
+  const [vocabMeaning, setVocabMeaning] = useState("");
+  const [vocabExample, setVocabExample] = useState("");
+  const [vocabError, setVocabError] = useState("");
 
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
   const wordsRef = useRef<PageContent["words"]>([]);
@@ -77,6 +73,10 @@ function Reader() {
   const readyToPlayNextRef = useRef(false);
   const hasStartedPlaybackRef = useRef(false);
   const speechUnlockedRef = useRef(false);
+  const isManualPauseRef = useRef(false);
+  const shouldAutoPlayRef = useRef(false);
+  const prevCalmVoiceRef = useRef("");
+  const prevRateRef = useRef(1);
 
   // Load PDF + meta
   useEffect(() => {
@@ -104,68 +104,39 @@ function Reader() {
     };
   }, [id, navigate]);
 
-  // Voices — prefer calm female voices
+    // Voices - use one calm, soothing default voice
   useEffect(() => {
     getVoices().then((v) => {
       setVoices(v);
 
-      const femaleHints = [
+      const calmHints = [
         "samantha", "victoria", "karen", "moira", "tessa", "fiona", "serena",
         "allison", "ava", "susan", "kate", "zira", "hazel", "joanna", "salli",
-        "amy", "emma", "aria", "jenny", "libby", "sonia", "en-us-language",
-        "google uk english female", "google us english",
-        "female", "woman",
+        "amy", "emma", "aria", "jenny", "libby", "sonia",
+        "calm", "natural", "neural", "premium",
       ];
-      const maleHints = [
-        "andrew", "daniel", "david", "george", "fred", "alex", "guy",
-        "brian", "ryan", "arthur", "davis", "christopher", "en-gb-language",
-        "male", "man",
-      ];
-      const baseScore = (voice: SpeechSynthesisVoice) => {
+      const calmScore = (voice: SpeechSynthesisVoice) => {
         const n = voice.name.toLowerCase();
         let s = 0;
         if (voice.lang.toLowerCase().startsWith("en")) s += 10;
+        if (n.includes("microsoft")) s += 5;
         if (n.includes("google")) s += 3;
-        if (n.includes("natural") || n.includes("neural") || n.includes("premium")) s += 5;
-        return s;
-      };
-      const femaleScore = (voice: SpeechSynthesisVoice) => {
-        const n = voice.name.toLowerCase();
-        let s = baseScore(voice);
-        if (femaleHints.some((h) => n.includes(h))) s += 20;
-        if (n.includes("male") && !n.includes("female")) s -= 15;
-        return s;
-      };
-      const maleScore = (voice: SpeechSynthesisVoice) => {
-        const n = voice.name.toLowerCase();
-        let s = baseScore(voice);
-        if (maleHints.some((h) => n.includes(h))) s += 20;
-        if (n.includes("female") && !n.includes("male")) s -= 15;
+        if (calmHints.some((h) => n.includes(h))) s += 12;
+        if (n.includes("male") || n.includes("man")) s -= 3;
         return s;
       };
       const findByName = (needles: string[]) =>
         v.find((voice) => needles.some((n) => voice.name.toLowerCase().includes(n.toLowerCase())));
-      const preferredFemale = findByName([
+      const preferredCalm = findByName([
         "microsoft ava",
         "ava (natural)",
         "ava online",
         "samantha",
         "google uk english female",
       ]);
-      const preferredMale = findByName([
-        "microsoft andrew",
-        "andrew (natural)",
-        "andrew online",
-        "daniel",
-        "google uk english male",
-      ]);
 
-      const bestFemale = preferredFemale ?? [...v].sort((a, b) => femaleScore(b) - femaleScore(a))[0];
-      const bestMale = preferredMale ?? [...v].sort((a, b) => maleScore(b) - maleScore(a))[0];
-      setVoiceOptions({
-        female: bestFemale?.name ?? "",
-        male: bestMale?.name ?? bestFemale?.name ?? "",
-      });
+      const bestCalm = preferredCalm ?? [...v].sort((a, b) => calmScore(b) - calmScore(a))[0];
+      setCalmVoiceName(bestCalm?.name ?? "");
     });
   }, []);
 
@@ -188,7 +159,7 @@ function Reader() {
         // Persist progress
         updateMeta(id, { lastPage: page });
         // If user requested next-page playback, kick it off
-        if (readyToPlayNextRef.current) {
+        if (readyToPlayNextRef.current && shouldAutoPlayRef.current) {
           readyToPlayNextRef.current = false;
           setTimeout(() => speakCurrent(content), 100);
         }
@@ -234,7 +205,7 @@ function Reader() {
       const c = content || pageContent;
       if (!c || !c.text.trim()) {
         // empty page → advance
-        if (meta && page < meta.pages) {
+        if (shouldAutoPlayRef.current && meta && page < meta.pages) {
           readyToPlayNextRef.current = true;
           setPage((p) => p + 1);
         } else {
@@ -248,8 +219,7 @@ function Reader() {
       const startChar = c.words[fromWord]?.start ?? 0;
       const text = c.text.slice(startChar);
       const u = new SpeechSynthesisUtterance(text);
-      const selectedVoiceName = voiceOptions[voiceGender];
-      const v = voices.find((x) => x.name === selectedVoiceName);
+      const v = voices.find((x) => x.name === calmVoiceName);
       if (v) u.voice = v;
       u.lang = v?.lang || "en-US";
       u.rate = rate;
@@ -266,42 +236,60 @@ function Reader() {
       };
       u.onend = () => {
         setActiveWord(-1);
-        if (meta && page < meta.pages) {
+        if (shouldAutoPlayRef.current && meta && page < meta.pages) {
           readyToPlayNextRef.current = true;
           setPage((p) => p + 1);
         } else {
           setIsPlaying(false);
         }
       };
-      u.onerror = () => setIsPlaying(false);
+      u.onerror = () => {
+        shouldAutoPlayRef.current = false;
+        setIsPlaying(false);
+      };
 
       utterRef.current = u;
       hasStartedPlaybackRef.current = true;
       setIsPlaying(true);
       synth.speak(u);
     },
-    [pageContent, voices, voiceGender, voiceOptions, rate, meta, page]
+    [pageContent, voices, calmVoiceName, rate, meta, page]
   );
 
   // Apply speed/voice changes immediately from the current word.
   useEffect(() => {
+    const settingsChanged =
+      prevCalmVoiceRef.current !== calmVoiceName ||
+      prevRateRef.current !== rate;
+
+    prevCalmVoiceRef.current = calmVoiceName;
+    prevRateRef.current = rate;
+
+    if (!settingsChanged) return;
     if (!hasStartedPlaybackRef.current) return;
+    if (!isPlaying) return;
+    if (isManualPauseRef.current) return;
     const synth = window.speechSynthesis;
-    if (!isPlaying && !synth.paused) return;
     const fromWord = activeWord >= 0 ? activeWord : 0;
     speakCurrent(pageContent, fromWord);
-  }, [voiceGender, voiceOptions, rate, isPlaying, activeWord, pageContent, speakCurrent]);
+  }, [calmVoiceName, rate, isPlaying, activeWord, pageContent, speakCurrent]);
 
   const handlePlayPause = () => {
     unlockSpeech();
     const synth = window.speechSynthesis;
     if (isPlaying) {
+      shouldAutoPlayRef.current = false;
+      isManualPauseRef.current = true;
       synth.pause();
       setIsPlaying(false);
     } else if (synth.paused && utterRef.current) {
-      const fromWord = activeWord >= 0 ? activeWord : 0;
-      speakCurrent(pageContent, fromWord);
+      shouldAutoPlayRef.current = true;
+      isManualPauseRef.current = false;
+      synth.resume();
+      setIsPlaying(true);
     } else {
+      shouldAutoPlayRef.current = true;
+      isManualPauseRef.current = false;
       const startWord = meta?.lastWord && page === meta.lastPage ? meta.lastWord : 0;
       speakCurrent(pageContent, startWord);
     }
@@ -317,6 +305,9 @@ function Reader() {
   const goToPage = (n: number) => {
     if (!meta) return;
     const target = Math.max(1, Math.min(meta.pages, n));
+    shouldAutoPlayRef.current = false;
+    isManualPauseRef.current = false;
+    readyToPlayNextRef.current = false;
     window.speechSynthesis.cancel();
     setIsPlaying(false);
     setPage(target);
@@ -354,6 +345,34 @@ function Reader() {
     setSearching(false);
   };
 
+  const lookupWord = async (rawWord: string) => {
+    const cleanWord = rawWord.replace(/[^a-zA-Z'-]/g, "").toLowerCase();
+    if (!cleanWord) return;
+
+    setSelectedWord(cleanWord);
+    setVocabOpen(true);
+    setVocabLoading(true);
+    setVocabMeaning("");
+    setVocabExample("");
+    setVocabError("");
+
+    try {
+      const res = await fetch(
+        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanWord)}`
+      );
+      if (!res.ok) throw new Error("Definition not found");
+      const data = await res.json();
+      const firstMeaning = data?.[0]?.meanings?.[0];
+      const firstDef = firstMeaning?.definitions?.[0];
+      setVocabMeaning(firstDef?.definition || "Meaning unavailable for this word.");
+      setVocabExample(firstDef?.example || "");
+    } catch {
+      setVocabError("No definition found. Try another word.");
+    } finally {
+      setVocabLoading(false);
+    }
+  };
+
   const isBookmarked = meta?.bookmarks.includes(page) ?? false;
 
   const renderedText = useMemo(() => {
@@ -379,6 +398,17 @@ function Reader() {
           key={`w-${i}`}
           ref={isActive ? activeWordElRef : undefined}
           className={`tts-word${isActive ? " active" : ""}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            void lookupWord(w.text);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void lookupWord(w.text);
+            }
+          }}
         >
           {w.text}
         </span>
@@ -473,25 +503,15 @@ function Reader() {
               <Button variant="ghost" size="icon"><Settings2 className="h-5 w-5" /></Button>
             </SheetTrigger>
             <SheetContent side="right" className="w-full sm:max-w-sm">
-              <SheetHeader><SheetTitle>Voice & speed</SheetTitle></SheetHeader>
+              <SheetHeader><SheetTitle>Narration speed</SheetTitle></SheetHeader>
               <div className="mt-6 space-y-6">
-                <div>
-                  <label className="text-sm font-medium block mb-2">Voice</label>
-                  <Select
-                    value={voiceGender}
-                    onValueChange={(v) => setVoiceGender(v as "female" | "male")}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="female">Female</SelectItem>
-                      <SelectItem value="male">Male</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  Free AI narration enabled via browser speech synthesis.
                 </div>
                 <div>
                   <div className="flex justify-between mb-2">
                     <label className="text-sm font-medium">Speed</label>
-                    <span className="text-sm text-muted-foreground">{rate.toFixed(2)}×</span>
+                    <span className="text-sm text-muted-foreground">{rate.toFixed(2)}x</span>
                   </div>
                   <Slider
                     value={[rate]}
@@ -501,6 +521,39 @@ function Reader() {
                     onValueChange={(v) => setRate(v[0])}
                   />
                 </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+          <Sheet open={vocabOpen} onOpenChange={setVocabOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Vocabulary helper">
+                <BookText className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-full sm:max-w-md">
+              <SheetHeader>
+                <SheetTitle>Vocabulary helper</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4 space-y-3">
+                <p className="text-sm">
+                  Selected word: <span className="font-semibold text-primary">{selectedWord || "None"}</span>
+                </p>
+                {vocabLoading && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Looking up meaning...
+                  </div>
+                )}
+                {!!vocabMeaning && (
+                  <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
+                    <p className="text-sm leading-relaxed">{vocabMeaning}</p>
+                    {!!vocabExample && (
+                      <p className="mt-2 text-xs text-muted-foreground">Example: {vocabExample}</p>
+                    )}
+                  </div>
+                )}
+                {!!vocabError && <p className="text-sm text-destructive">{vocabError}</p>}
+                <p className="text-xs text-muted-foreground">Tip: Tap any word in the reader to fetch its meaning.</p>
               </div>
             </SheetContent>
           </Sheet>
